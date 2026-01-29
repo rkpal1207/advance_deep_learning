@@ -21,14 +21,44 @@ class Compressor:
 
         Use arithmetic coding.
         """
-        raise NotImplementedError()
+        # Step 1: Tokenize the image
+        """
+        Compress image by tokenizing and serializing tokens.
+        """
+        with torch.no_grad():
+            # Tokenize: (1, H, W)
+            tokens = self.tokenizer.encode(x.unsqueeze(0))
+
+        # Move to CPU and convert to numpy
+        tokens = tokens.squeeze(0).cpu().numpy().astype(np.uint16)
+
+        # Serialize tokens
+        return tokens.tobytes()
+        #raise NotImplementedError()
 
     def decompress(self, x: bytes) -> torch.Tensor:
         """
         Decompress a tensor into a PIL image.
         You may assume the output image is 150 x 100 pixels.
         """
-        raise NotImplementedError()
+        """
+        Decompress tokens and reconstruct image.
+        """
+        # Recover token grid size
+        patch_size = self.tokenizer.encoder.patch_size
+        H = 100 // patch_size
+        W = 150 // patch_size
+
+        # Deserialize tokens
+        tokens = np.frombuffer(x, dtype=np.uint16).reshape(1, H, W)
+
+        tokens = torch.from_numpy(tokens).long().to(next(self.tokenizer.parameters()).device)
+
+        with torch.no_grad():
+            img = self.tokenizer.decode(tokens)
+
+        return img.squeeze(0)
+        #raise NotImplementedError()
 
 
 def compress(tokenizer: Path, autoregressive: Path, image: Path, compressed_image: Path):
