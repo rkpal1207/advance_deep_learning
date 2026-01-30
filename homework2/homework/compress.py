@@ -21,19 +21,27 @@ class Compressor:
 
         Use arithmetic coding.
         """
-        # Step 1: Tokenize the image
-        """
-        Compress image by tokenizing and serializing tokens.
-        """
-        with torch.no_grad():
-            # Tokenize: (1, H, W)
-            tokens = self.tokenizer.encode(x.unsqueeze(0))
-
-        # Move to CPU and convert to numpy
-        tokens = tokens.squeeze(0).cpu().numpy().astype(np.uint16)
-
-        # Serialize tokens
-        return tokens.tobytes()
+        # Ensure proper input dimensions (B,H,W,C)
+        if x.dim() == 3:
+            x = x.unsqueeze(0)
+            
+        # Tokenize image
+        tokens = self.tokenizer.encode_index(x)
+        B, h, w = tokens.shape
+        tokens = tokens.cpu().numpy()
+        
+        # Improved compression using zlib
+        out = io.BytesIO()
+        
+        # Store dimensions (2 bytes each)
+        out.write(h.to_bytes(2, 'big'))
+        out.write(w.to_bytes(2, 'big'))
+        
+        # Compress tokens using zlib
+        compressed = zlib.compress(tokens.tobytes(), level=9)
+        out.write(compressed)
+        
+        return out.getvalue()
         #raise NotImplementedError()
 
     def decompress(self, x: bytes) -> torch.Tensor:
@@ -44,20 +52,21 @@ class Compressor:
         """
         Decompress tokens and reconstruct image.
         """
-        # Recover token grid size
-        patch_size = self.tokenizer.encoder.patch_size
-        H = 100 // patch_size
-        W = 150 // patch_size
-
-        # Deserialize tokens
-        tokens = np.frombuffer(x, dtype=np.uint16).reshape(1, H, W)
-
-        tokens = torch.from_numpy(tokens).long().to(next(self.tokenizer.parameters()).device)
-
-        with torch.no_grad():
-            img = self.tokenizer.decode(tokens)
-
-        return img.squeeze(0)
+        stream = io.BytesIO(x)
+        
+        # Read dimensions
+        h = int.from_bytes(stream.read(2), 'big')
+        w = int.from_bytes(stream.read(2), 'big')
+        
+        # Decompress tokens
+        decompressed = zlib.decompress(stream.read())
+        tokens = np.frombuffer(decompressed, dtype=np.int64)
+        tokens_tensor = torch.from_numpy(tokens.copy()).long().to(self.device)
+        tokens_tensor = tokens_tensor.view(1, h, w)  # Ensure proper shape
+        
+        # Decode and return (H,W,C) image
+        decoded = self.tokenizer.decode_index(tokens_tensor)
+        return decoded.squeeze(0)  # Remove batch dimension
         #raise NotImplementedError()
 
 
